@@ -3,7 +3,9 @@ import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { io } from "socket.io-client";
 
-const SOCKET_URL = "http://localhost:3001";
+const SOCKET_URL =
+  import.meta.env.VITE_SOCKET_URL ||
+  "http://localhost:3001";
 
 function Game() {
   const [socket] = useState(() => io(SOCKET_URL));
@@ -132,25 +134,13 @@ function Game() {
       }
 
       setRoomCode(response.roomCode);
-
-      // Room creator is ALWAYS White
       setMyColor("w");
-
       setGame(new Chess(response.fen));
-
       setGameStarted(false);
       setGameOver(false);
-
       setMoves([]);
-
-      setCaptured({
-        white: [],
-        black: [],
-      });
-
-      setStatus(
-        "Room created — waiting for opponent"
-      );
+      setCaptured({ white: [], black: [] });
+      setStatus("Room created — waiting for opponent");
     });
   }
 
@@ -174,36 +164,18 @@ function Game() {
       }
 
       setRoomCode(response.roomCode);
-
-      // Room joiner is ALWAYS Black
       setMyColor("b");
-
       setGame(new Chess(response.fen));
-
       setGameStarted(true);
       setGameOver(false);
-
       setMoves([]);
-
-      setCaptured({
-        white: [],
-        black: [],
-      });
-
+      setCaptured({ white: [], black: [] });
       setStatus("Joined room — game starting");
     });
   }
 
   function handlePieceDrop({ sourceSquare, targetSquare }) {
-    if (!targetSquare) {
-      return false;
-    }
-
-    if (!gameStarted || gameOver) {
-      return false;
-    }
-
-    if (!myColor) {
+    if (!targetSquare || !gameStarted || gameOver || !myColor) {
       return false;
     }
 
@@ -221,15 +193,12 @@ function Game() {
         promotion: "q",
       });
 
-      if (!move) {
-        return false;
-      }
+      if (!move) return false;
 
       socket.emit(
         "make-move",
         {
           roomCode,
-
           move: {
             from: sourceSquare,
             to: targetSquare,
@@ -237,9 +206,7 @@ function Game() {
           },
         },
         (response) => {
-          if (!response.success) {
-            setStatus(response.error);
-          }
+          if (!response.success) setStatus(response.error);
         }
       );
 
@@ -251,36 +218,20 @@ function Game() {
   }
 
   function resign() {
-    if (!roomCode || gameOver) {
-      return;
-    }
-
-    socket.emit("resign", {
-      roomCode,
-    });
+    if (!roomCode || gameOver) return;
+    socket.emit("resign", { roomCode });
   }
 
   function resetGame() {
     setGame(new Chess());
-
     setRoomCode("");
     setInputCode("");
-
     setMyColor(null);
-
     setGameStarted(false);
     setGameOver(false);
-
     setMoves([]);
-
-    setCaptured({
-      white: [],
-      black: [],
-    });
-
-    setStatus(
-      "Create a room or join a friend's room"
-    );
+    setCaptured({ white: [], black: [] });
+    setStatus("Create a room or join a friend's room");
   }
 
   function formatCaptured(pieces) {
@@ -294,9 +245,7 @@ function Game() {
     };
 
     return pieces.map((piece, index) => (
-      <span key={index}>
-        {symbols[piece] || piece}
-      </span>
+      <span key={index}>{symbols[piece] || piece}</span>
     ));
   }
 
@@ -316,29 +265,16 @@ function Game() {
 
   return (
     <div className="game-page">
-
-      {/* HEADER */}
-
       <div className="game-header">
         <div>
-          <div className="game-brand">
-            ♞ Sandip.Chess
-          </div>
-
-          <div className="game-status">
-            {status}
-          </div>
+          <div className="game-brand">♞ Sandip.Chess</div>
+          <div className="game-status">{status}</div>
         </div>
 
-        <button
-          className="back-button"
-          onClick={resetGame}
-        >
+        <button className="back-button" onClick={resetGame}>
           New Game
         </button>
       </div>
-
-      {/* CREATE / JOIN */}
 
       {!roomCode && (
         <div
@@ -346,31 +282,17 @@ function Game() {
             maxWidth: "700px",
             margin: "0 auto 25px",
             padding: "20px",
-            border:
-              "1px solid rgba(255,255,255,0.08)",
+            border: "1px solid rgba(255,255,255,0.08)",
             borderRadius: "14px",
-            background:
-              "rgba(255,255,255,0.025)",
+            background: "rgba(255,255,255,0.025)",
           }}
         >
-          <h2
-            style={{
-              marginTop: 0,
-              fontFamily:
-                "Space Grotesk, sans-serif",
-            }}
-          >
+          <h2 style={{ marginTop: 0, fontFamily: "Space Grotesk, sans-serif" }}>
             Play with a friend
           </h2>
 
-          <p
-            style={{
-              color: "#858890",
-              fontSize: "14px",
-            }}
-          >
-            Create a private room and send the
-            code to your friend.
+          <p style={{ color: "#858890", fontSize: "14px" }}>
+            Create a private room and send the code to your friend.
           </p>
 
           <div
@@ -381,20 +303,13 @@ function Game() {
               marginTop: "18px",
             }}
           >
-            <button
-              className="primary-button"
-              onClick={createRoom}
-            >
+            <button className="primary-button" onClick={createRoom}>
               Create Room
             </button>
 
             <input
               value={inputCode}
-              onChange={(event) =>
-                setInputCode(
-                  event.target.value.toUpperCase()
-                )
-              }
+              onChange={(event) => setInputCode(event.target.value.toUpperCase())}
               placeholder="ROOM CODE"
               maxLength={6}
               style={{
@@ -402,8 +317,7 @@ function Game() {
                 minWidth: "150px",
                 padding: "13px",
                 borderRadius: "9px",
-                border:
-                  "1px solid rgba(255,255,255,0.1)",
+                border: "1px solid rgba(255,255,255,0.1)",
                 background: "#111216",
                 color: "white",
                 outline: "none",
@@ -413,17 +327,12 @@ function Game() {
               }}
             />
 
-            <button
-              className="secondary-button"
-              onClick={joinRoom}
-            >
+            <button className="secondary-button" onClick={joinRoom}>
               Join Room
             </button>
           </div>
         </div>
       )}
-
-      {/* ROOM CODE */}
 
       {roomCode && (
         <div
@@ -432,227 +341,91 @@ function Game() {
             margin: "0 auto 25px",
             padding: "18px",
             textAlign: "center",
-            border:
-              "1px solid rgba(255,255,255,0.08)",
+            border: "1px solid rgba(255,255,255,0.08)",
             borderRadius: "14px",
-            background:
-              "rgba(255,255,255,0.025)",
+            background: "rgba(255,255,255,0.025)",
           }}
         >
-          <div
-            style={{
-              color: "#858890",
-              fontSize: "12px",
-              letterSpacing: "1.5px",
-              fontWeight: "700",
-            }}
-          >
+          <div style={{ color: "#858890", fontSize: "12px", letterSpacing: "1.5px", fontWeight: "700" }}>
             ROOM CODE
           </div>
 
-          <div
-            style={{
-              marginTop: "8px",
-              fontFamily:
-                "Space Grotesk, sans-serif",
-              fontSize: "32px",
-              fontWeight: "700",
-              letterSpacing: "6px",
-            }}
-          >
+          <div style={{ marginTop: "8px", fontFamily: "Space Grotesk, sans-serif", fontSize: "32px", fontWeight: "700", letterSpacing: "6px" }}>
             {roomCode}
           </div>
 
-          <div
-            style={{
-              marginTop: "7px",
-              color: "#777a82",
-              fontSize: "13px",
-            }}
-          >
-            You are playing as{" "}
-            <strong>
-              {myColor === "w"
-                ? "White"
-                : "Black"}
-            </strong>
+          <div style={{ marginTop: "7px", color: "#777a82", fontSize: "13px" }}>
+            You are playing as <strong>{myColor === "w" ? "White" : "Black"}</strong>
           </div>
         </div>
       )}
 
-      {/* GAME */}
-
       <div className="game-layout">
-
         <div className="board-wrapper">
           <Chessboard
             options={{
               position: game.fen(),
-
-              onPieceDrop:
-                handlePieceDrop,
-
-              // White is always at the bottom
+              onPieceDrop: handlePieceDrop,
               boardOrientation: myColor === "b" ? "black" : "white",
-
               boardStyle: {
                 borderRadius: "14px",
-                boxShadow:
-                  "0 25px 80px rgba(0,0,0,0.55)",
+                boxShadow: "0 25px 80px rgba(0,0,0,0.55)",
               },
             }}
           />
         </div>
 
         <aside className="game-sidebar">
-
-          {/* BLACK */}
-
-          <div
-            className={`player-box ${
-              game.turn() === "b" &&
-              !gameOver
-                ? "active-player"
-                : ""
-            }`}
-          >
-            <div className="player-avatar">
-              ♟
-            </div>
-
+          <div className={`player-box ${game.turn() === "b" && !gameOver ? "active-player" : ""}`}>
+            <div className="player-avatar">♟</div>
             <div className="player-info">
-              <strong>
-                {myColor === "b"
-                  ? "You"
-                  : "Opponent"}
-              </strong>
-
-              <span>
-                Black • 1200
-              </span>
+              <strong>{myColor === "b" ? "You" : "Opponent"}</strong>
+              <span>Black • 1200</span>
             </div>
           </div>
 
-          {/* CAPTURED WHITE */}
-
-          <div className="captured-pieces">
-            {formatCaptured(
-              captured.white
-            )}
-          </div>
-
-          {/* MOVES */}
+          <div className="captured-pieces">{formatCaptured(captured.white)}</div>
 
           <div className="moves-box">
-
-            <div className="moves-title">
-              Game
-            </div>
-
+            <div className="moves-title">Game</div>
             <div className="moves-content">
-
               {moves.length === 0 ? (
-                <p>
-                  No moves yet
-                </p>
+                <p>No moves yet</p>
               ) : (
-                getMoveRows().map(
-                  (row) => (
-                    <div
-                      className="move-row"
-                      key={row.number}
-                    >
-                      <span className="move-number">
-                        {row.number}.
-                      </span>
-
-                      <span>
-                        {row.white}
-                      </span>
-
-                      <span>
-                        {row.black}
-                      </span>
-                    </div>
-                  )
-                )
+                getMoveRows().map((row) => (
+                  <div className="move-row" key={row.number}>
+                    <span className="move-number">{row.number}.</span>
+                    <span>{row.white}</span>
+                    <span>{row.black}</span>
+                  </div>
+                ))
               )}
-
             </div>
           </div>
 
-          {/* CAPTURED BLACK */}
+          <div className="captured-pieces">{formatCaptured(captured.black)}</div>
 
-          <div className="captured-pieces">
-            {formatCaptured(
-              captured.black
-            )}
-          </div>
-
-          {/* WHITE */}
-
-          <div
-            className={`player-box ${
-              game.turn() === "w" &&
-              !gameOver
-                ? "active-player"
-                : ""
-            }`}
-          >
-            <div className="player-avatar white">
-              ♙
-            </div>
-
+          <div className={`player-box ${game.turn() === "w" && !gameOver ? "active-player" : ""}`}>
+            <div className="player-avatar white">♙</div>
             <div className="player-info">
-              <strong>
-                {myColor === "w"
-                  ? "You"
-                  : "Opponent"}
-              </strong>
-
-              <span>
-                White • 1200
-              </span>
+              <strong>{myColor === "w" ? "You" : "Opponent"}</strong>
+              <span>White • 1200</span>
             </div>
           </div>
-
-          {/* GAME OVER */}
 
           {gameOver && (
             <div className="game-over">
-
-              <strong>
-                Game Over
-              </strong>
-
-              <span>
-                {status}
-              </span>
-
-              <button
-                onClick={resetGame}
-              >
-                🔄 New Game
-              </button>
-
+              <strong>Game Over</strong>
+              <span>{status}</span>
+              <button onClick={resetGame}>🔄 New Game</button>
             </div>
           )}
 
-          {/* ACTIONS */}
-
-          {gameStarted &&
-            !gameOver && (
-              <div className="game-actions">
-
-                <button
-                  onClick={resign}
-                >
-                  🏳️ Resign
-                </button>
-
-              </div>
-            )}
-
+          {gameStarted && !gameOver && (
+            <div className="game-actions">
+              <button onClick={resign}>🏳️ Resign</button>
+            </div>
+          )}
         </aside>
       </div>
     </div>
