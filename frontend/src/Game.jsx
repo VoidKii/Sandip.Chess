@@ -101,6 +101,7 @@ function Game() {
       return sendMove(sourceSquare, targetSquare);
     } catch { return false; }
   }
+  function answerDraw(accepted) { socket.emit("answer-draw", { roomCode, accepted }); setDrawOffered(false); }
   function resetGame() { socket.disconnect(); socket.connect(); setGame(new Chess()); setRoomCode(""); setInputCode(""); setMyColor(null); setGameStarted(false); setGameOver(false); setMoves([]); setCaptured({ white: [], black: [] }); setSelectedSquare(null); setPromotion(null); setClocks({ w: START_TIME, b: START_TIME }); setDrawOffered(false); setStatus("Create a room or join a friend's room"); }
   function formatTime(seconds) { return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`; }
   function formatCaptured(pieces) { const symbols = { p: "♟", n: "♞", b: "♝", r: "♜", q: "♛", k: "♚" }; return pieces.map((piece, index) => <span key={index}>{symbols[piece] || piece}</span>); }
