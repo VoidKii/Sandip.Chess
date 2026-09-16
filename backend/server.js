@@ -8,9 +8,13 @@ require("dotenv").config();
 const app = express();
 const server = http.createServer(app);
 
+const FRONTEND_URL =
+  process.env.FRONTEND_URL ||
+  "http://localhost:5173";
+
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: FRONTEND_URL,
   })
 );
 
@@ -18,7 +22,7 @@ app.use(express.json());
 
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173",
+    origin: FRONTEND_URL,
     methods: ["GET", "POST"],
   },
 });
@@ -63,10 +67,8 @@ app.get("/health", (req, res) => {
 io.on("connection", (socket) => {
   console.log("Player connected:", socket.id);
 
-  // CREATE ROOM
   socket.on("create-room", (callback) => {
     const roomCode = getUniqueRoomCode();
-
     const chess = new Chess();
 
     rooms.set(roomCode, {
@@ -78,7 +80,6 @@ io.on("connection", (socket) => {
     });
 
     socket.join(roomCode);
-
     socket.data.roomCode = roomCode;
     socket.data.color = "w";
 
@@ -92,34 +93,22 @@ io.on("connection", (socket) => {
     console.log(`Room ${roomCode} created`);
   });
 
-  // JOIN ROOM
   socket.on("join-room", (roomCode, callback) => {
     const code = String(roomCode).trim().toUpperCase();
-
     const room = rooms.get(code);
 
     if (!room) {
-      callback({
-        success: false,
-        error: "Room not found.",
-      });
-
+      callback({ success: false, error: "Room not found." });
       return;
     }
 
     if (room.players.black) {
-      callback({
-        success: false,
-        error: "Room is already full.",
-      });
-
+      callback({ success: false, error: "Room is already full." });
       return;
     }
 
     room.players.black = socket.id;
-
     socket.join(code);
-
     socket.data.roomCode = code;
     socket.data.color = "b";
 
@@ -137,27 +126,18 @@ io.on("connection", (socket) => {
     console.log(`Player joined room ${code}`);
   });
 
-  // MAKE MOVE
   socket.on("make-move", ({ roomCode, move }, callback) => {
     const room = rooms.get(roomCode);
 
     if (!room) {
-      callback({
-        success: false,
-        error: "Room not found.",
-      });
-
+      callback({ success: false, error: "Room not found." });
       return;
     }
 
     const playerColor = socket.data.color;
 
     if (room.chess.turn() !== playerColor) {
-      callback({
-        success: false,
-        error: "It is not your turn.",
-      });
-
+      callback({ success: false, error: "It is not your turn." });
       return;
     }
 
@@ -165,11 +145,7 @@ io.on("connection", (socket) => {
       const result = room.chess.move(move);
 
       if (!result) {
-        callback({
-          success: false,
-          error: "Invalid move.",
-        });
-
+        callback({ success: false, error: "Invalid move." });
         return;
       }
 
@@ -183,28 +159,18 @@ io.on("connection", (socket) => {
       };
 
       io.to(roomCode).emit("game-update", gameState);
-
-      callback({
-        success: true,
-      });
+      callback({ success: true });
     } catch (error) {
-      callback({
-        success: false,
-        error: "Invalid move.",
-      });
+      callback({ success: false, error: "Invalid move." });
     }
   });
 
-  // RESIGN
   socket.on("resign", ({ roomCode }) => {
     const room = rooms.get(roomCode);
 
     if (!room) return;
 
-    const winner =
-      socket.data.color === "w"
-        ? "Black"
-        : "White";
+    const winner = socket.data.color === "w" ? "Black" : "White";
 
     io.to(roomCode).emit("game-over", {
       reason: "resignation",
@@ -212,7 +178,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  // DISCONNECT
   socket.on("disconnect", () => {
     console.log("Player disconnected:", socket.id);
 
@@ -225,7 +190,6 @@ io.on("connection", (socket) => {
     if (!room) return;
 
     io.to(roomCode).emit("player-disconnected");
-
     rooms.delete(roomCode);
   });
 });
