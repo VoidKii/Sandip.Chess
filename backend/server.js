@@ -8,6 +8,7 @@ require("dotenv").config();
 const app = express();
 const server = http.createServer(app);
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+const OWNER_DISCORD_ID = process.env.OWNER_DISCORD_ID || "1523916325859229737";
 const START_TIME = 5 * 60 * 1000;
 
 app.use(cors({ origin: FRONTEND_URL }));
@@ -67,7 +68,7 @@ function syncClock(room) {
 }
 
 function isOwner(socket, room) {
-  return room && room.players.white === socket.id;
+  return Boolean(socket.data.isOwner) && room && room.players.white === socket.id;
 }
 
 app.get("/", (req, res) => res.json({ name: "Sandip.Chess", status: "online" }));
@@ -75,8 +76,13 @@ app.get("/health", (req, res) => res.json({ status: "OK" }));
 
 io.on("connection", (socket) => {
   console.log("Player connected:", socket.id);
+  socket.data.isOwner = false;
 
-  socket.on("create-room", (callback) => {
+  socket.on("create-room", ({ userId } = {}, callback = () => {}) => {
+    const normalizedUserId = String(userId || "").trim();
+    const owner = normalizedUserId === OWNER_DISCORD_ID;
+    socket.data.isOwner = owner;
+
     const roomCode = getUniqueRoomCode();
     const chess = new Chess();
     rooms.set(roomCode, {
@@ -93,8 +99,8 @@ io.on("connection", (socket) => {
     socket.join(roomCode);
     socket.data.roomCode = roomCode;
     socket.data.color = "w";
-    callback({ success: true, roomCode, color: "w", owner: true, fen: chess.fen(), clocks: { w: 300, b: 300 }, turn: "w" });
-    console.log(`Room ${roomCode} created`);
+    callback({ success: true, roomCode, color: "w", owner, fen: chess.fen(), clocks: { w: 300, b: 300 }, turn: "w" });
+    console.log(`Room ${roomCode} created${owner ? " by owner" : ""}`);
   });
 
   socket.on("join-room", (roomCode, callback) => {
@@ -108,6 +114,7 @@ io.on("connection", (socket) => {
     socket.join(code);
     socket.data.roomCode = code;
     socket.data.color = "b";
+    socket.data.isOwner = false;
     callback({ success: true, roomCode: code, color: "b", owner: false, fen: room.chess.fen(), clocks: getClockState(room), turn: room.chess.turn() });
     io.to(code).emit("room-ready", { fen: room.chess.fen(), clocks: getClockState(room), turn: room.chess.turn() });
   });
