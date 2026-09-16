@@ -1,138 +1,131 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { io } from "socket.io-client";
 
-const SOCKET_URL =
-  import.meta.env.VITE_SOCKET_URL ||
-  "http://localhost:3001";
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:3001";
+const START_TIME = 5 * 60;
 
 function Game() {
   const [socket] = useState(() => io(SOCKET_URL));
-
   const [game, setGame] = useState(new Chess());
-
-  const [status, setStatus] = useState(
-    "Create a room or join a friend's room"
-  );
-
+  const [status, setStatus] = useState("Create a room or join a friend's room");
   const [roomCode, setRoomCode] = useState("");
   const [inputCode, setInputCode] = useState("");
-
   const [myColor, setMyColor] = useState(null);
-
   const [connected, setConnected] = useState(false);
   const [gameStarted, setGameStarted] = useState(false);
   const [gameOver, setGameOver] = useState(false);
-
   const [moves, setMoves] = useState([]);
-
-  const [captured, setCaptured] = useState({
-    white: [],
-    black: [],
-  });
+  const [captured, setCaptured] = useState({ white: [], black: [] });
+  const [selectedSquare, setSelectedSquare] = useState(null);
+  const [promotion, setPromotion] = useState(null);
+  const [clocks, setClocks] = useState({ w: START_TIME, b: START_TIME });
+  const [drawOffered, setDrawOffered] = useState(false);
 
   useEffect(() => {
-    socket.on("connect", () => {
-      console.log("Connected to Sandip.Chess server");
+    const onConnect = () => {
       setConnected(true);
       setStatus("Connected — create or join a room");
-    });
-
-    socket.on("disconnect", () => {
-      console.log("Disconnected from server");
+    };
+    const onDisconnect = () => {
       setConnected(false);
       setStatus("Disconnected from server");
-    });
-
-    socket.on("room-ready", ({ fen }) => {
-      const newGame = new Chess(fen);
-
-      setGame(newGame);
+    };
+    const onReady = ({ fen }) => {
+      setGame(new Chess(fen));
       setGameStarted(true);
       setGameOver(false);
+      setSelectedSquare(null);
       setStatus("Game started — White to move");
-    });
-
-    socket.on("game-update", (gameState) => {
-      const newGame = new Chess(gameState.fen);
-
+    };
+    const onUpdate = (state) => {
+      const newGame = new Chess(state.fen);
       setGame(newGame);
-
-      setMoves((previous) => [
-        ...previous,
-        {
-          color: gameState.move.color,
-          san: gameState.move.san,
-        },
-      ]);
-
-      if (gameState.move.captured) {
+      setSelectedSquare(null);
+      setMoves((previous) => [...previous, { color: state.move.color, san: state.move.san }]);
+      if (state.move.captured) {
         setCaptured((previous) => ({
           ...previous,
-          [gameState.move.color === "w" ? "white" : "black"]: [
-            ...previous[
-              gameState.move.color === "w" ? "white" : "black"
-            ],
-            gameState.move.captured,
+          [state.move.color === "w" ? "white" : "black"]: [
+            ...previous[state.move.color === "w" ? "white" : "black"],
+            state.move.captured,
           ],
         }));
       }
-
-      if (gameState.checkmate) {
-        const winner =
-          gameState.turn === "w" ? "Black" : "White";
-
-        setStatus(`Checkmate — ${winner} wins!`);
+      if (state.checkmate) {
+        setStatus(`${state.turn === "w" ? "Black" : "White"} wins by checkmate!`);
         setGameOver(true);
-      } else if (gameState.draw) {
+      } else if (state.draw) {
         setStatus("Draw");
         setGameOver(true);
-      } else if (gameState.check) {
-        const player =
-          gameState.turn === "w" ? "White" : "Black";
-
-        setStatus(`${player} is in check`);
+      } else if (state.check) {
+        setStatus(`${state.turn === "w" ? "White" : "Black"} is in check`);
       } else {
-        const player =
-          gameState.turn === "w" ? "White" : "Black";
-
-        setStatus(`${player} to move`);
+        setStatus(`${state.turn === "w" ? "White" : "Black"} to move`);
       }
-    });
-
-    socket.on("game-over", ({ winner }) => {
-      setStatus(`${winner} wins by resignation`);
+    };
+    const onOver = ({ winner, reason }) => {
+      setStatus(`${winner} wins ${reason === "resignation" ? "by resignation" : "the game"}`);
       setGameOver(true);
-    });
-
-    socket.on("player-disconnected", () => {
+    };
+    const onDisconnectPlayer = () => {
       setStatus("Your opponent left the game");
       setGameStarted(false);
-    });
+    };
+    const onDrawOffer = () => {
+      setDrawOffered(true);
+      setStatus("Your opponent offered a draw");
+    };
+    const onDrawResult = ({ accepted }) => {
+      setDrawOffered(false);
+      if (accepted) {
+        setStatus("Draw agreed");
+        setGameOver(true);
+      } else {
+        setStatus(`${game.turn() === "w" ? "White" : "Black"} to move`);
+      }
+    };
 
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("room-ready", onReady);
+    socket.on("game-update", onUpdate);
+    socket.on("game-over", onOver);
+    socket.on("player-disconnected", onDisconnectPlayer);
+    socket.on("draw-offer", onDrawOffer);
+    socket.on("draw-result", onDrawResult);
     return () => {
-      socket.off("connect");
-      socket.off("disconnect");
-      socket.off("room-ready");
-      socket.off("game-update");
-      socket.off("game-over");
-      socket.off("player-disconnected");
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("room-ready", onReady);
+      socket.off("game-update", onUpdate);
+      socket.off("game-over", onOver);
+      socket.off("player-disconnected", onDisconnectPlayer);
+      socket.off("draw-offer", onDrawOffer);
+      socket.off("draw-result", onDrawResult);
     };
   }, [socket]);
 
+  useEffect(() => {
+    if (!gameStarted || gameOver) return;
+    const timer = setInterval(() => {
+      setClocks((current) => {
+        const turn = game.turn();
+        const next = Math.max(0, current[turn] - 1);
+        if (next === 0) {
+          socket.emit("timeout", { roomCode, color: turn });
+        }
+        return { ...current, [turn]: next };
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [gameStarted, gameOver, game, roomCode, socket]);
+
   function createRoom() {
-    if (!connected) {
-      setStatus("Not connected to server");
-      return;
-    }
-
+    if (!connected) return setStatus("Not connected to server");
     socket.emit("create-room", (response) => {
-      if (!response.success) {
-        setStatus(response.error);
-        return;
-      }
-
+      if (!response.success) return setStatus(response.error);
       setRoomCode(response.roomCode);
       setMyColor("w");
       setGame(new Chess(response.fen));
@@ -140,29 +133,17 @@ function Game() {
       setGameOver(false);
       setMoves([]);
       setCaptured({ white: [], black: [] });
+      setClocks({ w: START_TIME, b: START_TIME });
       setStatus("Room created — waiting for opponent");
     });
   }
 
   function joinRoom() {
     const code = inputCode.trim().toUpperCase();
-
-    if (!code) {
-      setStatus("Enter a room code");
-      return;
-    }
-
-    if (!connected) {
-      setStatus("Not connected to server");
-      return;
-    }
-
+    if (!code) return setStatus("Enter a room code");
+    if (!connected) return setStatus("Not connected to server");
     socket.emit("join-room", code, (response) => {
-      if (!response.success) {
-        setStatus(response.error);
-        return;
-      }
-
+      if (!response.success) return setStatus(response.error);
       setRoomCode(response.roomCode);
       setMyColor("b");
       setGame(new Chess(response.fen));
@@ -170,264 +151,156 @@ function Game() {
       setGameOver(false);
       setMoves([]);
       setCaptured({ white: [], black: [] });
+      setClocks({ w: START_TIME, b: START_TIME });
       setStatus("Joined room — game starting");
     });
   }
 
-  function handlePieceDrop({ sourceSquare, targetSquare }) {
-    if (!targetSquare || !gameStarted || gameOver || !myColor) {
-      return false;
-    }
-
-    if (game.turn() !== myColor) {
-      setStatus("It's not your turn");
-      return false;
-    }
-
-    const gameCopy = new Chess(game.fen());
-
+  function sendMove(from, to, promotionPiece = "q") {
+    if (!roomCode || !gameStarted || gameOver || !myColor || game.turn() !== myColor) return false;
+    const test = new Chess(game.fen());
     try {
-      const move = gameCopy.move({
-        from: sourceSquare,
-        to: targetSquare,
-        promotion: "q",
-      });
-
+      const move = test.move({ from, to, promotion: promotionPiece });
       if (!move) return false;
-
-      socket.emit(
-        "make-move",
-        {
-          roomCode,
-          move: {
-            from: sourceSquare,
-            to: targetSquare,
-            promotion: "q",
-          },
-        },
-        (response) => {
-          if (!response.success) setStatus(response.error);
-        }
-      );
-
+      socket.emit("make-move", { roomCode, move: { from, to, promotion: promotionPiece } }, (response) => {
+        if (!response.success) setStatus(response.error);
+      });
       return true;
-    } catch (error) {
-      console.log("Invalid move:", error);
+    } catch {
+      return false;
+    }
+  }
+
+  function chooseMove(from, to) {
+    if (!gameStarted || gameOver || game.turn() !== myColor) return;
+    const piece = game.get(from);
+    if (!piece || piece.color !== myColor) return;
+    const legal = game.moves({ square: from, verbose: true });
+    const target = legal.find((move) => move.to === to);
+    if (!target) {
+      setSelectedSquare(from);
+      return;
+    }
+    if (target.promotion) {
+      setPromotion({ from, to });
+      return;
+    }
+    sendMove(from, to);
+  }
+
+  function handleSquareClick(square) {
+    if (!gameStarted || gameOver || game.turn() !== myColor) return;
+    if (!selectedSquare) {
+      const piece = game.get(square);
+      if (piece?.color === myColor) setSelectedSquare(square);
+      return;
+    }
+    if (selectedSquare === square) return setSelectedSquare(null);
+    const piece = game.get(square);
+    if (piece?.color === myColor) return setSelectedSquare(square);
+    chooseMove(selectedSquare, square);
+  }
+
+  function handlePieceDrop({ sourceSquare, targetSquare }) {
+    if (!targetSquare) return false;
+    setSelectedSquare(null);
+    const test = new Chess(game.fen());
+    try {
+      const move = test.moves({ square: sourceSquare, verbose: true }).find((m) => m.to === targetSquare);
+      if (move?.promotion) {
+        setPromotion({ from: sourceSquare, to: targetSquare });
+        return false;
+      }
+      return sendMove(sourceSquare, targetSquare);
+    } catch {
       return false;
     }
   }
 
   function resign() {
-    if (!roomCode || gameOver) return;
-    socket.emit("resign", { roomCode });
+    if (roomCode && !gameOver) socket.emit("resign", { roomCode });
   }
-
+  function offerDraw() {
+    if (roomCode && !gameOver) socket.emit("offer-draw", { roomCode });
+  }
+  function answerDraw(accepted) {
+    socket.emit("answer-draw", { roomCode, accepted });
+    setDrawOffered(false);
+  }
   function resetGame() {
+    socket.disconnect();
+    socket.connect();
     setGame(new Chess());
-    setRoomCode("");
-    setInputCode("");
-    setMyColor(null);
-    setGameStarted(false);
-    setGameOver(false);
-    setMoves([]);
-    setCaptured({ white: [], black: [] });
+    setRoomCode(""); setInputCode(""); setMyColor(null); setGameStarted(false); setGameOver(false);
+    setMoves([]); setCaptured({ white: [], black: [] }); setSelectedSquare(null); setPromotion(null);
+    setClocks({ w: START_TIME, b: START_TIME }); setDrawOffered(false);
     setStatus("Create a room or join a friend's room");
   }
 
-  function formatCaptured(pieces) {
-    const symbols = {
-      p: "♟",
-      n: "♞",
-      b: "♝",
-      r: "♜",
-      q: "♛",
-      k: "♚",
-    };
-
-    return pieces.map((piece, index) => (
-      <span key={index}>{symbols[piece] || piece}</span>
-    ));
+  function formatTime(seconds) {
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   }
-
+  function formatCaptured(pieces) {
+    const symbols = { p: "♟", n: "♞", b: "♝", r: "♜", q: "♛", k: "♚" };
+    return pieces.map((piece, index) => <span key={index}>{symbols[piece] || piece}</span>);
+  }
   function getMoveRows() {
     const rows = [];
-
-    for (let i = 0; i < moves.length; i += 2) {
-      rows.push({
-        number: i / 2 + 1,
-        white: moves[i]?.san || "",
-        black: moves[i + 1]?.san || "",
-      });
-    }
-
+    for (let i = 0; i < moves.length; i += 2) rows.push({ number: i / 2 + 1, white: moves[i]?.san || "", black: moves[i + 1]?.san || "" });
     return rows;
   }
+
+  const squareStyles = useMemo(() => {
+    if (!selectedSquare) return {};
+    const styles = { [selectedSquare]: { background: "rgba(255, 214, 80, 0.55)" } };
+    game.moves({ square: selectedSquare, verbose: true }).forEach((move) => {
+      styles[move.to] = { background: game.get(move.to) ? "rgba(220,70,70,0.65)" : "radial-gradient(circle, rgba(60,190,100,.65) 18%, transparent 20%)" };
+    });
+    return styles;
+  }, [game, selectedSquare]);
 
   return (
     <div className="game-page">
       <div className="game-header">
-        <div>
-          <div className="game-brand">♞ Sandip.Chess</div>
-          <div className="game-status">{status}</div>
-        </div>
-
-        <button className="back-button" onClick={resetGame}>
-          New Game
-        </button>
+        <div><div className="game-brand">♞ Sandip.Chess</div><div className="game-status">{status}</div></div>
+        <button className="back-button" onClick={resetGame}>New Game</button>
       </div>
 
-      {!roomCode && (
-        <div
-          style={{
-            maxWidth: "700px",
-            margin: "0 auto 25px",
-            padding: "20px",
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: "14px",
-            background: "rgba(255,255,255,0.025)",
-          }}
-        >
-          <h2 style={{ marginTop: 0, fontFamily: "Space Grotesk, sans-serif" }}>
-            Play with a friend
-          </h2>
+      {!roomCode && <div className="room-panel">
+        <h2>Play with a friend</h2><p>Create a private room and send the code to your friend.</p>
+        <div className="room-controls"><button className="primary-button" onClick={createRoom}>Create Room</button><input value={inputCode} onChange={(e) => setInputCode(e.target.value.toUpperCase())} placeholder="ROOM CODE" maxLength={6}/><button className="secondary-button" onClick={joinRoom}>Join Room</button></div>
+      </div>}
 
-          <p style={{ color: "#858890", fontSize: "14px" }}>
-            Create a private room and send the code to your friend.
-          </p>
-
-          <div
-            style={{
-              display: "flex",
-              gap: "10px",
-              flexWrap: "wrap",
-              marginTop: "18px",
-            }}
-          >
-            <button className="primary-button" onClick={createRoom}>
-              Create Room
-            </button>
-
-            <input
-              value={inputCode}
-              onChange={(event) => setInputCode(event.target.value.toUpperCase())}
-              placeholder="ROOM CODE"
-              maxLength={6}
-              style={{
-                flex: 1,
-                minWidth: "150px",
-                padding: "13px",
-                borderRadius: "9px",
-                border: "1px solid rgba(255,255,255,0.1)",
-                background: "#111216",
-                color: "white",
-                outline: "none",
-                textTransform: "uppercase",
-                fontWeight: "700",
-                letterSpacing: "2px",
-              }}
-            />
-
-            <button className="secondary-button" onClick={joinRoom}>
-              Join Room
-            </button>
-          </div>
-        </div>
-      )}
-
-      {roomCode && (
-        <div
-          style={{
-            maxWidth: "700px",
-            margin: "0 auto 25px",
-            padding: "18px",
-            textAlign: "center",
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: "14px",
-            background: "rgba(255,255,255,0.025)",
-          }}
-        >
-          <div style={{ color: "#858890", fontSize: "12px", letterSpacing: "1.5px", fontWeight: "700" }}>
-            ROOM CODE
-          </div>
-
-          <div style={{ marginTop: "8px", fontFamily: "Space Grotesk, sans-serif", fontSize: "32px", fontWeight: "700", letterSpacing: "6px" }}>
-            {roomCode}
-          </div>
-
-          <div style={{ marginTop: "7px", color: "#777a82", fontSize: "13px" }}>
-            You are playing as <strong>{myColor === "w" ? "White" : "Black"}</strong>
-          </div>
-        </div>
-      )}
+      {roomCode && <div className="room-panel room-code-panel"><small>ROOM CODE</small><div className="room-code">{roomCode}</div><span>You are <strong>{myColor === "w" ? "White" : "Black"}</strong> • 5+0</span></div>}
 
       <div className="game-layout">
         <div className="board-wrapper">
-          <Chessboard
-            options={{
-              position: game.fen(),
-              onPieceDrop: handlePieceDrop,
-              boardOrientation: myColor === "b" ? "black" : "white",
-              boardStyle: {
-                borderRadius: "14px",
-                boxShadow: "0 25px 80px rgba(0,0,0,0.55)",
-              },
-            }}
-          />
+          <Chessboard options={{
+            position: game.fen(),
+            onPieceDrop: handlePieceDrop,
+            onSquareClick: handleSquareClick,
+            allowDragging: gameStarted && !gameOver && game.turn() === myColor,
+            boardOrientation: myColor === "b" ? "black" : "white",
+            squareStyles,
+            boardStyle: { borderRadius: "14px", boxShadow: "0 25px 80px rgba(0,0,0,0.55)" },
+          }}/>
         </div>
 
         <aside className="game-sidebar">
-          <div className={`player-box ${game.turn() === "b" && !gameOver ? "active-player" : ""}`}>
-            <div className="player-avatar">♟</div>
-            <div className="player-info">
-              <strong>{myColor === "b" ? "You" : "Opponent"}</strong>
-              <span>Black • 1200</span>
-            </div>
-          </div>
-
+          <div className={`clock ${game.turn() === "b" && !gameOver ? "active-clock" : ""}`}>{formatTime(clocks.b)}</div>
+          <div className="player-box"><div className="player-avatar">♟</div><div className="player-info"><strong>{myColor === "b" ? "You" : "Opponent"}</strong><span>Black • 1200</span></div></div>
           <div className="captured-pieces">{formatCaptured(captured.white)}</div>
-
-          <div className="moves-box">
-            <div className="moves-title">Game</div>
-            <div className="moves-content">
-              {moves.length === 0 ? (
-                <p>No moves yet</p>
-              ) : (
-                getMoveRows().map((row) => (
-                  <div className="move-row" key={row.number}>
-                    <span className="move-number">{row.number}.</span>
-                    <span>{row.white}</span>
-                    <span>{row.black}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
+          <div className="moves-box"><div className="moves-title">Game</div><div className="moves-content">{moves.length === 0 ? <p>No moves yet</p> : getMoveRows().map((row) => <div className="move-row" key={row.number}><span className="move-number">{row.number}.</span><span>{row.white}</span><span>{row.black}</span></div>)}</div></div>
           <div className="captured-pieces">{formatCaptured(captured.black)}</div>
+          <div className={`clock ${game.turn() === "w" && !gameOver ? "active-clock" : ""}`}>{formatTime(clocks.w)}</div>
+          <div className="player-box"><div className="player-avatar white">♙</div><div className="player-info"><strong>{myColor === "w" ? "You" : "Opponent"}</strong><span>White • 1200</span></div></div>
 
-          <div className={`player-box ${game.turn() === "w" && !gameOver ? "active-player" : ""}`}>
-            <div className="player-avatar white">♙</div>
-            <div className="player-info">
-              <strong>{myColor === "w" ? "You" : "Opponent"}</strong>
-              <span>White • 1200</span>
-            </div>
-          </div>
-
-          {gameOver && (
-            <div className="game-over">
-              <strong>Game Over</strong>
-              <span>{status}</span>
-              <button onClick={resetGame}>🔄 New Game</button>
-            </div>
-          )}
-
-          {gameStarted && !gameOver && (
-            <div className="game-actions">
-              <button onClick={resign}>🏳️ Resign</button>
-            </div>
-          )}
+          {drawOffered && <div className="draw-offer"><strong>Draw offered</strong><div><button onClick={() => answerDraw(true)}>Accept</button><button onClick={() => answerDraw(false)}>Decline</button></div></div>}
+          {gameOver ? <div className="game-over"><strong>Game Over</strong><span>{status}</span><button onClick={resetGame}>🔄 New Game</button></div> : gameStarted && <div className="game-actions"><button onClick={offerDraw}>🤝 Draw</button><button onClick={resign}>🏳️ Resign</button></div>}
         </aside>
       </div>
+
+      {promotion && <div className="promotion-overlay"><div className="promotion-box"><h3>Choose promotion</h3><div>{[["q","♛"],["r","♜"],["b","♝"],["n","♞"]].map(([piece, icon]) => <button key={piece} onClick={() => { sendMove(promotion.from, promotion.to, piece); setPromotion(null); }}>{icon}</button>)}</div></div></div>}
     </div>
   );
 }
