@@ -9,7 +9,7 @@ const app = express();
 const server = http.createServer(app);
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 const OWNER_DISCORD_ID = process.env.OWNER_DISCORD_ID || "1523916325859229737";
-const START_TIME = 5 * 60 * 1000;
+const DEFAULT_START_TIME = 5 * 60;
 
 app.use(cors({ origin: FRONTEND_URL }));
 app.use(express.json());
@@ -35,6 +35,24 @@ function emitGameOver(roomCode, winner, reason) {
   io.to(roomCode).emit("game-over", { winner, reason });
 }
 
+function normalizeTimeControl(timeControl) {
+  const initial = Number(timeControl?.initial);
+  const increment = Number(timeControl?.increment);
+
+  if (!Number.isFinite(initial) || !Number.isFinite(increment)) {
+    return { initial: DEFAULT_START_TIME, increment: 0, label: "5+0" };
+  }
+
+  const safeInitial = Math.min(Math.max(Math.floor(initial), 30), 60 * 60);
+  const safeIncrement = Math.min(Math.max(Math.floor(increment), 0), 120);
+
+  return {
+    initial: safeInitial,
+    increment: safeIncrement,
+    label: `${Math.floor(safeInitial / 60)}+${safeIncrement}`,
+  };
+}
+
 function getRemainingTime(room, color) {
   let remaining = room.clocks[color];
   if (!room.frozen[color] && !room.finished && room.started && room.chess.turn() === color && room.turnStartedAt) {
@@ -49,6 +67,7 @@ function getClockState(room) {
     b: Math.ceil(getRemainingTime(room, "b") / 1000),
     turn: room.chess.turn(),
     frozen: { ...room.frozen },
+    timeControl: room.timeControl,
   };
 }
 
@@ -78,9 +97,10 @@ io.on("connection", (socket) => {
   console.log("Player connected:", socket.id);
   socket.data.isOwner = false;
 
-  socket.on("create-room", ({ userId } = {}, callback = () => {}) => {
+  socket.on("create-room", ({ userId, timeControl } = {}, callback = () => {}) => {
     const normalizedUserId = String(userId || "").trim();
     const owner = normalizedUserId === OWNER_DISCORD_ID;
+    const selectedTimeControl = normalizeTimeControl(timeControl);
     socket.data.isOwner = owner;
 
     const roomCode = getUniqueRoomCode();
@@ -92,15 +112,25 @@ io.on("connection", (socket) => {
       drawOfferedBy: null,
       finished: false,
       started: false,
-      clocks: { w: START_TIME, b: START_TIME },
+      clocks: { w: selectedTimeControl.initial * 1000, b: selectedTimeControl.initial * 1000 },
       frozen: { w: false, b: false },
       turnStartedAt: null,
+      timeControl: selectedTimeControl,
     });
     socket.join(roomCode);
     socket.data.roomCode = roomCode;
     socket.data.color = "w";
-    callback({ success: true, roomCode, color: "w", owner, fen: chess.fen(), clocks: { w: 300, b: 300 }, turn: "w" });
-    console.log(`Room ${roomCode} created${owner ? " by owner" : ""}`);
+    callback({
+      success: true,
+      roomCode,
+      color: "w",
+      owner,
+      fen: chess.fen(),
+      clocks: { w: selectedTimeControl.initial, b: selectedTimeControl.initial, frozen: { w: false, b: false }, timeControl: selectedTimeControl },
+      turn: "w",
+      timeControl: selectedTimeControl,
+    });
+    console.log(`Room ${roomCode} created${owner ? " by owner" : ""} with ${selectedTimeControl.label}`);
   });
 
   socket.on("join-room", (roomCode, callback) => {
@@ -115,8 +145,8 @@ io.on("connection", (socket) => {
     socket.data.roomCode = code;
     socket.data.color = "b";
     socket.data.isOwner = false;
-    callback({ success: true, roomCode: code, color: "b", owner: false, fen: room.chess.fen(), clocks: getClockState(room), turn: room.chess.turn() });
-    io.to(code).emit("room-ready", { fen: room.chess.fen(), clocks: getClockState(room), turn: room.chess.turn() });
+    callback({ success: true, roomCode: code, color: "b", owner: false, fen: room.chess.fen(), clocks: getClockState(room), turn: room.chess.turn(), timeControl: room.timeControl });
+    io.to(code).emit("room-ready", { fen: room.chess.fen(), clocks: getClockState(room), turn: room.chess.turn(), timeControl: room.timeControl });
   });
 
   socket.on("make-move", ({ roomCode, move }, callback) => {
@@ -138,6 +168,7 @@ io.on("connection", (socket) => {
         return callback({ success: false, error: "Invalid move." });
       }
 
+      room.clocks[movingColor] += room.timeControl.increment * 1000;
       room.drawOfferedBy = null;
       room.turnStartedAt = Date.now();
 
@@ -149,6 +180,7 @@ io.on("connection", (socket) => {
         check: room.chess.isCheck(),
         turn: room.chess.turn(),
         clocks: getClockState(room),
+        timeControl: room.timeControl,
       };
 
       if (state.checkmate || state.draw) {
@@ -189,7 +221,7 @@ io.on("connection", (socket) => {
       room.clocks.w = Math.min(getRemainingTime(room, "w") + 60 * 1000, 60 * 60 * 1000);
       room.turnStartedAt = Date.now();
     } else if (action === "reset") {
-      room.clocks = { w: START_TIME, b: START_TIME };
+      room.clocks = { w: room.timeControl.initial * 1000, b: room.timeControl.initial * 1000 };
       room.frozen = { w: false, b: false };
       room.finished = false;
       room.drawOfferedBy = null;
