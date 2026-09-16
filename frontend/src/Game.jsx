@@ -8,6 +8,21 @@ const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:3001";
 const START_TIME = 5 * 60;
 const OWNER_DISCORD_ID = "1523916325859229737";
 
+const TIME_CONTROLS = [
+  { category: "Bullet", initial: 60, increment: 0, label: "1+0" },
+  { category: "Bullet", initial: 120, increment: 1, label: "2+1" },
+  { category: "Blitz", initial: 180, increment: 0, label: "3+0" },
+  { category: "Blitz", initial: 180, increment: 2, label: "3+2" },
+  { category: "Blitz", initial: 300, increment: 0, label: "5+0" },
+  { category: "Blitz", initial: 300, increment: 3, label: "5+3" },
+  { category: "Rapid", initial: 600, increment: 0, label: "10+0" },
+  { category: "Rapid", initial: 600, increment: 5, label: "10+5" },
+  { category: "Rapid", initial: 900, increment: 10, label: "15+10" },
+  { category: "Classical", initial: 1800, increment: 0, label: "30+0" },
+];
+
+const DEFAULT_TIME = TIME_CONTROLS.find((item) => item.label === "5+0");
+
 function Game() {
   const [socket] = useState(() => io(SOCKET_URL));
   const [game, setGame] = useState(new Chess());
@@ -24,15 +39,19 @@ function Game() {
   const [captured, setCaptured] = useState({ white: [], black: [] });
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [promotion, setPromotion] = useState(null);
-  const [clocks, setClocks] = useState({ w: START_TIME, b: START_TIME, frozen: { w: false, b: false } });
+  const [clocks, setClocks] = useState({ w: START_TIME, b: START_TIME, frozen: { w: false, b: false }, timeControl: DEFAULT_TIME });
   const [drawOffered, setDrawOffered] = useState(false);
+  const [selectedTime, setSelectedTime] = useState(DEFAULT_TIME);
+  const [customMode, setCustomMode] = useState(false);
+  const [customMinutes, setCustomMinutes] = useState(10);
+  const [customIncrement, setCustomIncrement] = useState(5);
 
   useEffect(() => {
     const onConnect = () => { setConnected(true); setStatus("Connected — create or join a room"); };
     const onDisconnect = () => { setConnected(false); setStatus("Disconnected from server"); };
     const onReady = ({ fen, clocks: serverClocks }) => {
       setGame(new Chess(fen));
-      setClocks(serverClocks || { w: START_TIME, b: START_TIME, frozen: { w: false, b: false } });
+      setClocks(serverClocks || { w: DEFAULT_TIME.initial, b: DEFAULT_TIME.initial, frozen: { w: false, b: false }, timeControl: DEFAULT_TIME });
       setGameStarted(true);
       setGameOver(false);
       setSelectedSquare(null);
@@ -92,9 +111,17 @@ function Game() {
     return () => clearInterval(timer);
   }, [gameStarted, gameOver, roomCode, socket]);
 
+  function getCurrentTimeControl() {
+    if (!customMode) return selectedTime;
+    const minutes = Math.min(Math.max(Number(customMinutes) || 1, 1), 60);
+    const increment = Math.min(Math.max(Number(customIncrement) || 0, 0), 120);
+    return { initial: minutes * 60, increment, label: `${minutes}+${increment}` };
+  }
+
   function createRoom() {
     if (!connected) return setStatus("Not connected to server");
-    socket.emit("create-room", { userId: OWNER_DISCORD_ID }, (response) => {
+    const timeControl = getCurrentTimeControl();
+    socket.emit("create-room", { userId: OWNER_DISCORD_ID, timeControl }, (response) => {
       if (!response.success) return setStatus(response.error);
       setRoomCode(response.roomCode);
       setMyColor("w");
@@ -105,8 +132,8 @@ function Game() {
       setGameOver(false);
       setMoves([]);
       setCaptured({ white: [], black: [] });
-      setClocks(response.clocks || { w: START_TIME, b: START_TIME, frozen: { w: false, b: false } });
-      setStatus("Room created — waiting for opponent");
+      setClocks(response.clocks || { w: timeControl.initial, b: timeControl.initial, frozen: { w: false, b: false }, timeControl });
+      setStatus(`Room created — waiting for opponent • ${response.timeControl?.label || timeControl.label}`);
     });
   }
 
@@ -125,8 +152,8 @@ function Game() {
       setGameOver(false);
       setMoves([]);
       setCaptured({ white: [], black: [] });
-      setClocks(response.clocks || { w: START_TIME, b: START_TIME, frozen: { w: false, b: false } });
-      setStatus("Joined room — game starting");
+      setClocks(response.clocks || { w: DEFAULT_TIME.initial, b: DEFAULT_TIME.initial, frozen: { w: false, b: false }, timeControl: DEFAULT_TIME });
+      setStatus(`Joined room — ${response.timeControl?.label || "game"} starting`);
     });
   }
 
@@ -200,7 +227,7 @@ function Game() {
     setCaptured({ white: [], black: [] });
     setSelectedSquare(null);
     setPromotion(null);
-    setClocks({ w: START_TIME, b: START_TIME, frozen: { w: false, b: false } });
+    setClocks({ w: START_TIME, b: START_TIME, frozen: { w: false, b: false }, timeControl: DEFAULT_TIME });
     setDrawOffered(false);
     setStatus("Create a room or join a friend's room");
   }
@@ -230,10 +257,14 @@ function Game() {
     return styles;
   }, [game, selectedSquare]);
 
+  const currentTimeControl = getCurrentTimeControl();
+
   return <div className="game-page">
     <div className="game-header"><div><div className="game-brand">♞ Sandip.Chess</div><div className="game-status"><span className={connected ? "connection-dot online" : "connection-dot"}></span>{status}</div></div><div className="game-header-actions">{isOwner && <button className={`owner-button ${ownerMode ? "owner-active" : ""}`} onClick={() => setOwnerMode((value) => !value)}>👑 Owner Mode</button>}<button className="back-button" onClick={resetGame}>New Game</button></div></div>
-    {!roomCode && <div className="room-panel"><h2>Play with a friend</h2><p>Create a private room and send the code to your friend.</p><div className="room-controls"><button className="primary-button" onClick={createRoom}>Create Room</button><input value={inputCode} onChange={(e) => setInputCode(e.target.value.toUpperCase())} placeholder="ROOM CODE" maxLength={6}/><button className="secondary-button" onClick={joinRoom}>Join Room</button></div></div>}
-    {roomCode && <div className="room-panel room-code-panel"><small>ROOM CODE</small><div className="room-code">{roomCode}</div><span>You are <strong>{myColor === "w" ? "White" : "Black"}</strong> • 5+0 {isOwner && "• 👑 Owner"}</span></div>}
+
+    {!roomCode && <div className="room-panel time-control-panel"><div className="time-heading"><div><h2>Choose time control</h2><p>Pick the clock before creating your room. Once the game starts, the time control is locked.</p></div><strong>⏱️ {currentTimeControl.label}</strong></div><div className="time-control-grid">{TIME_CONTROLS.map((control) => <button key={control.label} className={`time-control-button ${!customMode && selectedTime.label === control.label ? "selected-time" : ""}`} onClick={() => { setCustomMode(false); setSelectedTime(control); }}><span>{control.label}</span><small>{control.category}</small></button>)}<button className={`time-control-button ${customMode ? "selected-time" : ""}`} onClick={() => setCustomMode(true)}><span>Custom</span><small>Choose your own</small></button></div>{customMode && <div className="custom-time-controls"><label>Minutes<input type="number" min="1" max="60" value={customMinutes} onChange={(e) => setCustomMinutes(e.target.value)} /></label><span>+</span><label>Increment (sec)<input type="number" min="0" max="120" value={customIncrement} onChange={(e) => setCustomIncrement(e.target.value)} /></label></div>}</div>}
+    {!roomCode && <div className="room-panel"><h2>Play with a friend</h2><p>Create a private room and send the code to your friend.</p><div className="room-controls"><button className="primary-button" onClick={createRoom}>Create Room • {currentTimeControl.label}</button><input value={inputCode} onChange={(e) => setInputCode(e.target.value.toUpperCase())} placeholder="ROOM CODE" maxLength={6}/><button className="secondary-button" onClick={joinRoom}>Join Room</button></div></div>}
+    {roomCode && <div className="room-panel room-code-panel"><small>ROOM CODE</small><div className="room-code">{roomCode}</div><span>You are <strong>{myColor === "w" ? "White" : "Black"}</strong> • {clocks.timeControl?.label || currentTimeControl.label} {isOwner && "• 👑 Owner"}</span></div>}
     {ownerMode && isOwner && roomCode && <div className="owner-panel"><div><span className="owner-label">👑 OWNER CHEAT PANEL</span><p>Private room controls — your brother won't see the panel.</p></div><div className="owner-controls"><button onClick={() => ownerCheat("drain-opponent")}>💀 Drain Opponent</button><button onClick={() => ownerCheat("freeze-opponent")}>{clocks.frozen?.b ? "▶️ Unfreeze Opponent" : "🧊 Freeze Opponent"}</button><button onClick={() => ownerCheat("give-owner-time")}>⏱️ +60s To Me</button><button onClick={() => ownerCheat("force-win")}>👑 Force My Win</button><button onClick={() => ownerCheat("reset")}>♻️ Reset Game State</button></div></div>}
     <div className="game-layout"><div className="board-wrapper"><Chessboard options={{ position: game.fen(), onPieceDrop: handlePieceDrop, onSquareClick: handleSquareClick, allowDragging: gameStarted && !gameOver && game.turn() === myColor, boardOrientation: myColor === "b" ? "black" : "white", squareStyles, boardStyle: { borderRadius: "14px", boxShadow: "0 25px 80px rgba(0,0,0,0.55)" } }}/></div><aside className="game-sidebar"><div className={`clock ${game.turn() === "b" && !gameOver ? "active-clock" : ""} ${clocks.frozen?.b ? "frozen-clock" : ""}`}>{formatTime(clocks.b)}{clocks.frozen?.b && <small> FROZEN</small>}</div><div className="player-box"><div className="player-avatar">♟</div><div className="player-info"><strong>{myColor === "b" ? "You" : "Opponent"}</strong><span>Black • 1200</span></div></div><div className="captured-pieces">{formatCaptured(captured.white)}</div><div className="moves-box"><div className="moves-title">Game</div><div className="moves-content">{moves.length === 0 ? <p>No moves yet</p> : getMoveRows().map((row) => <div className="move-row" key={row.number}><span className="move-number">{row.number}.</span><span>{row.white}</span><span>{row.black}</span></div>)}</div></div><div className="captured-pieces">{formatCaptured(captured.black)}</div><div className={`clock ${game.turn() === "w" && !gameOver ? "active-clock" : ""} ${clocks.frozen?.w ? "frozen-clock" : ""}`}>{formatTime(clocks.w)}{clocks.frozen?.w && <small> FROZEN</small>}</div><div className="player-box"><div className="player-avatar white">♙</div><div className="player-info"><strong>{myColor === "w" ? "You" : "Opponent"}</strong><span>White • 1200</span></div></div>{drawOffered && <div className="draw-offer"><strong>Draw offered</strong><div><button onClick={() => answerDraw(true)}>Accept</button><button onClick={() => answerDraw(false)}>Decline</button></div></div>}{gameOver ? <div className="game-over"><strong>Game Over</strong><span>{status}</span><button onClick={resetGame}>🔄 New Game</button></div> : gameStarted && <div className="game-actions"><button onClick={() => socket.emit("offer-draw", { roomCode })}>🤝 Draw</button><button onClick={() => socket.emit("resign", { roomCode })}>🏳️ Resign</button></div>}</aside></div>
     {promotion && <div className="promotion-overlay"><div className="promotion-box"><h3>Choose promotion</h3><div>{[["q","♛"],["r","♜"],["b","♝"],["n","♞"]].map(([piece, icon]) => <button key={piece} onClick={() => { sendMove(promotion.from, promotion.to, piece); setPromotion(null); }}>{icon}</button>)}</div></div></div>}
