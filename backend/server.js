@@ -36,7 +36,7 @@ function emitGameOver(roomCode, winner, reason) {
 
 function getRemainingTime(room, color) {
   let remaining = room.clocks[color];
-  if (!room.finished && room.started && room.chess.turn() === color && room.turnStartedAt) {
+  if (!room.frozen[color] && !room.finished && room.started && room.chess.turn() === color && room.turnStartedAt) {
     remaining -= Date.now() - room.turnStartedAt;
   }
   return Math.max(0, remaining);
@@ -47,20 +47,27 @@ function getClockState(room) {
     w: Math.ceil(getRemainingTime(room, "w") / 1000),
     b: Math.ceil(getRemainingTime(room, "b") / 1000),
     turn: room.chess.turn(),
+    frozen: { ...room.frozen },
   };
 }
 
 function syncClock(room) {
   if (!room.started || room.finished || !room.turnStartedAt) return false;
   const color = room.chess.turn();
+  if (room.frozen[color]) return false;
   const remaining = getRemainingTime(room, color);
   if (remaining <= 0) {
     room.clocks[color] = 0;
     room.finished = true;
+    room.turnStartedAt = null;
     emitGameOver(room.code, color === "w" ? "Black" : "White", "timeout");
     return true;
   }
   return false;
+}
+
+function isOwner(socket, room) {
+  return room && room.players.white === socket.id;
 }
 
 app.get("/", (req, res) => res.json({ name: "Sandip.Chess", status: "online" }));
@@ -80,12 +87,13 @@ io.on("connection", (socket) => {
       finished: false,
       started: false,
       clocks: { w: START_TIME, b: START_TIME },
+      frozen: { w: false, b: false },
       turnStartedAt: null,
     });
     socket.join(roomCode);
     socket.data.roomCode = roomCode;
     socket.data.color = "w";
-    callback({ success: true, roomCode, color: "w", fen: chess.fen(), clocks: { w: 300, b: 300 }, turn: "w" });
+    callback({ success: true, roomCode, color: "w", owner: true, fen: chess.fen(), clocks: { w: 300, b: 300 }, turn: "w" });
     console.log(`Room ${roomCode} created`);
   });
 
@@ -100,7 +108,7 @@ io.on("connection", (socket) => {
     socket.join(code);
     socket.data.roomCode = code;
     socket.data.color = "b";
-    callback({ success: true, roomCode: code, color: "b", fen: room.chess.fen(), clocks: getClockState(room), turn: room.chess.turn() });
+    callback({ success: true, roomCode: code, color: "b", owner: false, fen: room.chess.fen(), clocks: getClockState(room), turn: room.chess.turn() });
     io.to(code).emit("room-ready", { fen: room.chess.fen(), clocks: getClockState(room), turn: room.chess.turn() });
   });
 
@@ -110,7 +118,6 @@ io.on("connection", (socket) => {
     if (room.finished) return callback({ success: false, error: "Game is over." });
     if (!room.started) return callback({ success: false, error: "Waiting for opponent." });
     if (room.chess.turn() !== socket.data.color) return callback({ success: false, error: "It is not your turn." });
-
     if (syncClock(room)) return callback({ success: false, error: "Time expired." });
 
     const movingColor = room.chess.turn();
@@ -155,6 +162,42 @@ io.on("connection", (socket) => {
     if (!room) return;
     if (syncClock(room)) return;
     socket.emit("clock-update", getClockState(room));
+  });
+
+  socket.on("owner-cheat", ({ roomCode, action }, callback = () => {}) => {
+    const room = rooms.get(roomCode);
+    if (!room) return callback({ success: false, error: "Room not found." });
+    if (!isOwner(socket, room)) return callback({ success: false, error: "Owner only." });
+    if (!room.started) return callback({ success: false, error: "Start a game first." });
+    if (room.finished && action !== "reset") return callback({ success: false, error: "Game is already over." });
+
+    if (action === "freeze-opponent") {
+      room.frozen.b = !room.frozen.b;
+      room.clocks.b = getRemainingTime(room, "b");
+      room.turnStartedAt = Date.now();
+    } else if (action === "drain-opponent") {
+      room.clocks.b = Math.min(getRemainingTime(room, "b"), 10 * 1000);
+      room.turnStartedAt = Date.now();
+    } else if (action === "give-owner-time") {
+      room.clocks.w = Math.min(getRemainingTime(room, "w") + 60 * 1000, 60 * 60 * 1000);
+      room.turnStartedAt = Date.now();
+    } else if (action === "reset") {
+      room.clocks = { w: START_TIME, b: START_TIME };
+      room.frozen = { w: false, b: false };
+      room.finished = false;
+      room.drawOfferedBy = null;
+      room.turnStartedAt = Date.now();
+    } else if (action === "force-win") {
+      room.finished = true;
+      room.turnStartedAt = null;
+      emitGameOver(roomCode, "White", "owner cheat");
+      return callback({ success: true });
+    } else {
+      return callback({ success: false, error: "Unknown owner action." });
+    }
+
+    io.to(roomCode).emit("clock-update", getClockState(room));
+    callback({ success: true });
   });
 
   socket.on("resign", ({ roomCode }) => {
