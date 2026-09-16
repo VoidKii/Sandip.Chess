@@ -6,6 +6,7 @@ import "./Game.css";
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:3001";
 const START_TIME = 5 * 60;
+const OWNER_DISCORD_ID = "1523916325859229737";
 
 function Game() {
   const [socket] = useState(() => io(SOCKET_URL));
@@ -93,7 +94,7 @@ function Game() {
 
   function createRoom() {
     if (!connected) return setStatus("Not connected to server");
-    socket.emit("create-room", (response) => {
+    socket.emit("create-room", { userId: OWNER_DISCORD_ID }, (response) => {
       if (!response.success) return setStatus(response.error);
       setRoomCode(response.roomCode);
       setMyColor("w");
@@ -130,6 +131,7 @@ function Game() {
   }
 
   function ownerCheat(action) {
+    if (!isOwner) return;
     socket.emit("owner-cheat", { roomCode, action }, (response) => {
       if (!response?.success) setStatus(response?.error || "Owner action failed");
     });
@@ -229,29 +231,11 @@ function Game() {
   }, [game, selectedSquare]);
 
   return <div className="game-page">
-    <div className="game-header">
-      <div><div className="game-brand">♞ Sandip.Chess</div><div className="game-status"><span className={connected ? "connection-dot online" : "connection-dot"}></span>{status}</div></div>
-      <div className="game-header-actions">
-        {isOwner && <button className={`owner-button ${ownerMode ? "owner-active" : ""}`} onClick={() => setOwnerMode((value) => !value)}>👑 Owner Mode</button>}
-        <button className="back-button" onClick={resetGame}>New Game</button>
-      </div>
-    </div>
-
+    <div className="game-header"><div><div className="game-brand">♞ Sandip.Chess</div><div className="game-status"><span className={connected ? "connection-dot online" : "connection-dot"}></span>{status}</div></div><div className="game-header-actions">{isOwner && <button className={`owner-button ${ownerMode ? "owner-active" : ""}`} onClick={() => setOwnerMode((value) => !value)}>👑 Owner Mode</button>}<button className="back-button" onClick={resetGame}>New Game</button></div></div>
     {!roomCode && <div className="room-panel"><h2>Play with a friend</h2><p>Create a private room and send the code to your friend.</p><div className="room-controls"><button className="primary-button" onClick={createRoom}>Create Room</button><input value={inputCode} onChange={(e) => setInputCode(e.target.value.toUpperCase())} placeholder="ROOM CODE" maxLength={6}/><button className="secondary-button" onClick={joinRoom}>Join Room</button></div></div>}
     {roomCode && <div className="room-panel room-code-panel"><small>ROOM CODE</small><div className="room-code">{roomCode}</div><span>You are <strong>{myColor === "w" ? "White" : "Black"}</strong> • 5+0 {isOwner && "• 👑 Owner"}</span></div>}
-
     {ownerMode && isOwner && roomCode && <div className="owner-panel"><div><span className="owner-label">👑 OWNER CHEAT PANEL</span><p>Private room controls — your brother won't see the panel.</p></div><div className="owner-controls"><button onClick={() => ownerCheat("drain-opponent")}>💀 Drain Opponent</button><button onClick={() => ownerCheat("freeze-opponent")}>{clocks.frozen?.b ? "▶️ Unfreeze Opponent" : "🧊 Freeze Opponent"}</button><button onClick={() => ownerCheat("give-owner-time")}>⏱️ +60s To Me</button><button onClick={() => ownerCheat("force-win")}>👑 Force My Win</button><button onClick={() => ownerCheat("reset")}>♻️ Reset Game State</button></div></div>}
-
-    <div className="game-layout">
-      <div className="board-wrapper"><Chessboard options={{ position: game.fen(), onPieceDrop: handlePieceDrop, onSquareClick: handleSquareClick, allowDragging: gameStarted && !gameOver && game.turn() === myColor, boardOrientation: myColor === "b" ? "black" : "white", squareStyles, boardStyle: { borderRadius: "14px", boxShadow: "0 25px 80px rgba(0,0,0,0.55)" } }}/></div>
-      <aside className="game-sidebar">
-        <div className={`clock ${game.turn() === "b" && !gameOver ? "active-clock" : ""} ${clocks.frozen?.b ? "frozen-clock" : ""}`}>{formatTime(clocks.b)}{clocks.frozen?.b && <small> FROZEN</small>}</div><div className="player-box"><div className="player-avatar">♟</div><div className="player-info"><strong>{myColor === "b" ? "You" : "Opponent"}</strong><span>Black • 1200</span></div></div>
-        <div className="captured-pieces">{formatCaptured(captured.white)}</div><div className="moves-box"><div className="moves-title">Game</div><div className="moves-content">{moves.length === 0 ? <p>No moves yet</p> : getMoveRows().map((row) => <div className="move-row" key={row.number}><span className="move-number">{row.number}.</span><span>{row.white}</span><span>{row.black}</span></div>)}</div></div>
-        <div className="captured-pieces">{formatCaptured(captured.black)}</div><div className={`clock ${game.turn() === "w" && !gameOver ? "active-clock" : ""} ${clocks.frozen?.w ? "frozen-clock" : ""}`}>{formatTime(clocks.w)}{clocks.frozen?.w && <small> FROZEN</small>}</div><div className="player-box"><div className="player-avatar white">♙</div><div className="player-info"><strong>{myColor === "w" ? "You" : "Opponent"}</strong><span>White • 1200</span></div></div>
-        {drawOffered && <div className="draw-offer"><strong>Draw offered</strong><div><button onClick={() => answerDraw(true)}>Accept</button><button onClick={() => answerDraw(false)}>Decline</button></div></div>}
-        {gameOver ? <div className="game-over"><strong>Game Over</strong><span>{status}</span><button onClick={resetGame}>🔄 New Game</button></div> : gameStarted && <div className="game-actions"><button onClick={() => socket.emit("offer-draw", { roomCode })}>🤝 Draw</button><button onClick={() => socket.emit("resign", { roomCode })}>🏳️ Resign</button></div>}
-      </aside>
-    </div>
+    <div className="game-layout"><div className="board-wrapper"><Chessboard options={{ position: game.fen(), onPieceDrop: handlePieceDrop, onSquareClick: handleSquareClick, allowDragging: gameStarted && !gameOver && game.turn() === myColor, boardOrientation: myColor === "b" ? "black" : "white", squareStyles, boardStyle: { borderRadius: "14px", boxShadow: "0 25px 80px rgba(0,0,0,0.55)" } }}/></div><aside className="game-sidebar"><div className={`clock ${game.turn() === "b" && !gameOver ? "active-clock" : ""} ${clocks.frozen?.b ? "frozen-clock" : ""}`}>{formatTime(clocks.b)}{clocks.frozen?.b && <small> FROZEN</small>}</div><div className="player-box"><div className="player-avatar">♟</div><div className="player-info"><strong>{myColor === "b" ? "You" : "Opponent"}</strong><span>Black • 1200</span></div></div><div className="captured-pieces">{formatCaptured(captured.white)}</div><div className="moves-box"><div className="moves-title">Game</div><div className="moves-content">{moves.length === 0 ? <p>No moves yet</p> : getMoveRows().map((row) => <div className="move-row" key={row.number}><span className="move-number">{row.number}.</span><span>{row.white}</span><span>{row.black}</span></div>)}</div></div><div className="captured-pieces">{formatCaptured(captured.black)}</div><div className={`clock ${game.turn() === "w" && !gameOver ? "active-clock" : ""} ${clocks.frozen?.w ? "frozen-clock" : ""}`}>{formatTime(clocks.w)}{clocks.frozen?.w && <small> FROZEN</small>}</div><div className="player-box"><div className="player-avatar white">♙</div><div className="player-info"><strong>{myColor === "w" ? "You" : "Opponent"}</strong><span>White • 1200</span></div></div>{drawOffered && <div className="draw-offer"><strong>Draw offered</strong><div><button onClick={() => answerDraw(true)}>Accept</button><button onClick={() => answerDraw(false)}>Decline</button></div></div>}{gameOver ? <div className="game-over"><strong>Game Over</strong><span>{status}</span><button onClick={resetGame}>🔄 New Game</button></div> : gameStarted && <div className="game-actions"><button onClick={() => socket.emit("offer-draw", { roomCode })}>🤝 Draw</button><button onClick={() => socket.emit("resign", { roomCode })}>🏳️ Resign</button></div>}</aside></div>
     {promotion && <div className="promotion-overlay"><div className="promotion-box"><h3>Choose promotion</h3><div>{[["q","♛"],["r","♜"],["b","♝"],["n","♞"]].map(([piece, icon]) => <button key={piece} onClick={() => { sendMove(promotion.from, promotion.to, piece); setPromotion(null); }}>{icon}</button>)}</div></div></div>}
   </div>;
 }
