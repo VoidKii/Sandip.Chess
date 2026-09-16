@@ -27,9 +27,18 @@ function Game() {
   useEffect(() => {
     const onConnect = () => { setConnected(true); setStatus("Connected — create or join a room"); };
     const onDisconnect = () => { setConnected(false); setStatus("Disconnected from server"); };
-    const onReady = ({ fen }) => { setGame(new Chess(fen)); setGameStarted(true); setGameOver(false); setSelectedSquare(null); setStatus("Game started — White to move"); };
+    const onReady = ({ fen, clocks: serverClocks }) => {
+      setGame(new Chess(fen));
+      setClocks(serverClocks || { w: START_TIME, b: START_TIME });
+      setGameStarted(true);
+      setGameOver(false);
+      setSelectedSquare(null);
+      setStatus("Game started — White to move");
+    };
     const onUpdate = (state) => {
-      setGame(new Chess(state.fen)); setSelectedSquare(null);
+      setGame(new Chess(state.fen));
+      setSelectedSquare(null);
+      if (state.clocks) setClocks(state.clocks);
       setMoves((previous) => [...previous, { color: state.move.color, san: state.move.san }]);
       if (state.move.captured) setCaptured((previous) => ({ ...previous, [state.move.color === "w" ? "white" : "black"]: [...previous[state.move.color === "w" ? "white" : "black"], state.move.captured] }));
       if (state.checkmate) { setStatus(`${state.turn === "w" ? "Black" : "White"} wins by checkmate!`); setGameOver(true); }
@@ -37,47 +46,103 @@ function Game() {
       else if (state.check) setStatus(`${state.turn === "w" ? "White" : "Black"} is in check`);
       else setStatus(`${state.turn === "w" ? "White" : "Black"} to move`);
     };
-    const onOver = ({ winner, reason }) => { setStatus(reason === "draw" ? "Draw agreed" : `${winner} wins by ${reason}`); setGameOver(true); };
+    const onClockUpdate = (state) => {
+      setClocks(state);
+    };
+    const onOver = ({ winner, reason }) => {
+      if (reason === "timeout") {
+        setStatus(`${winner} wins on time!`);
+      } else if (reason === "draw") {
+        setStatus("Draw agreed");
+      } else {
+        setStatus(`${winner} wins by ${reason}`);
+      }
+      setGameOver(true);
+    };
     const onDisconnectPlayer = () => { setStatus("Your opponent left the game"); setGameStarted(false); };
     const onDrawOffer = () => { setDrawOffered(true); setStatus("Your opponent offered a draw"); };
     const onDrawResult = ({ accepted }) => { setDrawOffered(false); if (accepted) { setStatus("Draw agreed"); setGameOver(true); } };
-    socket.on("connect", onConnect); socket.on("disconnect", onDisconnect); socket.on("room-ready", onReady); socket.on("game-update", onUpdate); socket.on("game-over", onOver); socket.on("player-disconnected", onDisconnectPlayer); socket.on("draw-offer", onDrawOffer); socket.on("draw-result", onDrawResult);
-    return () => { socket.off("connect", onConnect); socket.off("disconnect", onDisconnect); socket.off("room-ready", onReady); socket.off("game-update", onUpdate); socket.off("game-over", onOver); socket.off("player-disconnected", onDisconnectPlayer); socket.off("draw-offer", onDrawOffer); socket.off("draw-result", onDrawResult); };
+
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("room-ready", onReady);
+    socket.on("game-update", onUpdate);
+    socket.on("clock-update", onClockUpdate);
+    socket.on("game-over", onOver);
+    socket.on("player-disconnected", onDisconnectPlayer);
+    socket.on("draw-offer", onDrawOffer);
+    socket.on("draw-result", onDrawResult);
+
+    return () => {
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("room-ready", onReady);
+      socket.off("game-update", onUpdate);
+      socket.off("clock-update", onClockUpdate);
+      socket.off("game-over", onOver);
+      socket.off("player-disconnected", onDisconnectPlayer);
+      socket.off("draw-offer", onDrawOffer);
+      socket.off("draw-result", onDrawResult);
+    };
   }, [socket]);
 
   useEffect(() => {
-    if (!gameStarted || gameOver) return;
-    const timer = setInterval(() => setClocks((current) => {
-      const turn = game.turn(); const next = Math.max(0, current[turn] - 1);
-      if (next === 0) socket.emit("timeout", { roomCode, color: turn });
-      return { ...current, [turn]: next };
-    }), 1000);
+    if (!gameStarted || gameOver || !roomCode) return;
+    const sync = () => socket.emit("clock-sync", { roomCode });
+    const timer = setInterval(sync, 500);
+    sync();
     return () => clearInterval(timer);
-  }, [gameStarted, gameOver, game, roomCode, socket]);
+  }, [gameStarted, gameOver, roomCode, socket]);
 
   function createRoom() {
     if (!connected) return setStatus("Not connected to server");
     socket.emit("create-room", (response) => {
       if (!response.success) return setStatus(response.error);
-      setRoomCode(response.roomCode); setMyColor("w"); setGame(new Chess(response.fen)); setGameStarted(false); setGameOver(false); setMoves([]); setCaptured({ white: [], black: [] }); setClocks({ w: START_TIME, b: START_TIME }); setStatus("Room created — waiting for opponent");
+      setRoomCode(response.roomCode);
+      setMyColor("w");
+      setGame(new Chess(response.fen));
+      setGameStarted(false);
+      setGameOver(false);
+      setMoves([]);
+      setCaptured({ white: [], black: [] });
+      setClocks(response.clocks || { w: START_TIME, b: START_TIME });
+      setStatus("Room created — waiting for opponent");
     });
   }
+
   function joinRoom() {
-    const code = inputCode.trim().toUpperCase(); if (!code) return setStatus("Enter a room code"); if (!connected) return setStatus("Not connected to server");
+    const code = inputCode.trim().toUpperCase();
+    if (!code) return setStatus("Enter a room code");
+    if (!connected) return setStatus("Not connected to server");
     socket.emit("join-room", code, (response) => {
       if (!response.success) return setStatus(response.error);
-      setRoomCode(response.roomCode); setMyColor("b"); setGame(new Chess(response.fen)); setGameStarted(true); setGameOver(false); setMoves([]); setCaptured({ white: [], black: [] }); setClocks({ w: START_TIME, b: START_TIME }); setStatus("Joined room — game starting");
+      setRoomCode(response.roomCode);
+      setMyColor("b");
+      setGame(new Chess(response.fen));
+      setGameStarted(true);
+      setGameOver(false);
+      setMoves([]);
+      setCaptured({ white: [], black: [] });
+      setClocks(response.clocks || { w: START_TIME, b: START_TIME });
+      setStatus("Joined room — game starting");
     });
   }
+
   function sendMove(from, to, promotionPiece = "q") {
     if (!roomCode || !gameStarted || gameOver || !myColor || game.turn() !== myColor) return false;
     const test = new Chess(game.fen());
     try {
-      const move = test.move({ from, to, promotion: promotionPiece }); if (!move) return false;
-      socket.emit("make-move", { roomCode, move: { from, to, promotion: promotionPiece } }, (response) => { if (!response.success) setStatus(response.error); });
+      const move = test.move({ from, to, promotion: promotionPiece });
+      if (!move) return false;
+      socket.emit("make-move", { roomCode, move: { from, to, promotion: promotionPiece } }, (response) => {
+        if (!response.success) setStatus(response.error);
+      });
       return true;
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
+
   function chooseMove(from, to) {
     if (!gameStarted || gameOver || game.turn() !== myColor) return;
     if (game.get(from)?.color !== myColor) return;
@@ -86,31 +151,78 @@ function Game() {
     if (target.promotion) return setPromotion({ from, to });
     sendMove(from, to);
   }
+
   function handleSquareClick(square) {
     if (!gameStarted || gameOver || game.turn() !== myColor) return;
-    if (!selectedSquare) { if (game.get(square)?.color === myColor) setSelectedSquare(square); return; }
+    if (!selectedSquare) {
+      if (game.get(square)?.color === myColor) setSelectedSquare(square);
+      return;
+    }
     if (selectedSquare === square) return setSelectedSquare(null);
     if (game.get(square)?.color === myColor) return setSelectedSquare(square);
     chooseMove(selectedSquare, square);
   }
+
   function handlePieceDrop({ sourceSquare, targetSquare }) {
-    if (!targetSquare) return false; setSelectedSquare(null);
+    if (!targetSquare) return false;
+    setSelectedSquare(null);
     try {
       const move = game.moves({ square: sourceSquare, verbose: true }).find((m) => m.to === targetSquare);
-      if (move?.promotion) { setPromotion({ from: sourceSquare, to: targetSquare }); return false; }
+      if (move?.promotion) {
+        setPromotion({ from: sourceSquare, to: targetSquare });
+        return false;
+      }
       return sendMove(sourceSquare, targetSquare);
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
-  function answerDraw(accepted) { socket.emit("answer-draw", { roomCode, accepted }); setDrawOffered(false); }
-  function resetGame() { socket.disconnect(); socket.connect(); setGame(new Chess()); setRoomCode(""); setInputCode(""); setMyColor(null); setGameStarted(false); setGameOver(false); setMoves([]); setCaptured({ white: [], black: [] }); setSelectedSquare(null); setPromotion(null); setClocks({ w: START_TIME, b: START_TIME }); setDrawOffered(false); setStatus("Create a room or join a friend's room"); }
-  function formatTime(seconds) { return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`; }
-  function formatCaptured(pieces) { const symbols = { p: "♟", n: "♞", b: "♝", r: "♜", q: "♛", k: "♚" }; return pieces.map((piece, index) => <span key={index}>{symbols[piece] || piece}</span>); }
-  function getMoveRows() { const rows = []; for (let i = 0; i < moves.length; i += 2) rows.push({ number: i / 2 + 1, white: moves[i]?.san || "", black: moves[i + 1]?.san || "" }); return rows; }
+
+  function answerDraw(accepted) {
+    socket.emit("answer-draw", { roomCode, accepted });
+    setDrawOffered(false);
+  }
+
+  function resetGame() {
+    socket.disconnect();
+    socket.connect();
+    setGame(new Chess());
+    setRoomCode("");
+    setInputCode("");
+    setMyColor(null);
+    setGameStarted(false);
+    setGameOver(false);
+    setMoves([]);
+    setCaptured({ white: [], black: [] });
+    setSelectedSquare(null);
+    setPromotion(null);
+    setClocks({ w: START_TIME, b: START_TIME });
+    setDrawOffered(false);
+    setStatus("Create a room or join a friend's room");
+  }
+
+  function formatTime(seconds) {
+    const safe = Math.max(0, Math.ceil(Number(seconds) || 0));
+    return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
+  }
+
+  function formatCaptured(pieces) {
+    const symbols = { p: "♟", n: "♞", b: "♝", r: "♜", q: "♛", k: "♚" };
+    return pieces.map((piece, index) => <span key={index}>{symbols[piece] || piece}</span>);
+  }
+
+  function getMoveRows() {
+    const rows = [];
+    for (let i = 0; i < moves.length; i += 2) rows.push({ number: i / 2 + 1, white: moves[i]?.san || "", black: moves[i + 1]?.san || "" });
+    return rows;
+  }
 
   const squareStyles = useMemo(() => {
     if (!selectedSquare) return {};
     const styles = { [selectedSquare]: { background: "rgba(255, 214, 80, 0.55)" } };
-    game.moves({ square: selectedSquare, verbose: true }).forEach((move) => { styles[move.to] = { background: game.get(move.to) ? "rgba(220,70,70,0.65)" : "radial-gradient(circle, rgba(60,190,100,.65) 18%, transparent 20%)" }; });
+    game.moves({ square: selectedSquare, verbose: true }).forEach((move) => {
+      styles[move.to] = { background: game.get(move.to) ? "rgba(220,70,70,0.65)" : "radial-gradient(circle, rgba(60,190,100,.65) 18%, transparent 20%)" };
+    });
     return styles;
   }, [game, selectedSquare]);
 
@@ -131,4 +243,5 @@ function Game() {
     {promotion && <div className="promotion-overlay"><div className="promotion-box"><h3>Choose promotion</h3><div>{[["q","♛"],["r","♜"],["b","♝"],["n","♞"]].map(([piece, icon]) => <button key={piece} onClick={() => { sendMove(promotion.from, promotion.to, piece); setPromotion(null); }}>{icon}</button>)}</div></div></div>}
   </div>;
 }
+
 export default Game;
